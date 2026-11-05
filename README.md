@@ -1,1 +1,15 @@
-# beatlabs-delete-old-branches-action
+# beatlabs/delete-old-branches-action
+
+Delete branches which are older than certain period of time
+
+Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at [https://github.com/beatlabs/delete-old-branches-action](https://github.com/beatlabs/delete-old-branches-action).
+
+## Versions
+
+| Version | Tag | Upstream commit | Hardening report |
+|---------|-----|-----------------|------------------|
+| v0.0.11 | [`v0.0.11`](https://github.com/chainguard-actions/beatlabs-delete-old-branches-action/tree/v0.0.11) | [`4eeeb87`](https://github.com/beatlabs/delete-old-branches-action/commit/4eeeb8740ff8b3cb310296ddd6b43c3387734588) | [`HARDENING.md`](https://github.com/chainguard-actions/beatlabs-delete-old-branches-action/blob/v0.0.11/HARDENING.md) |
+
+## Privacy
+
+This Action contacts Chainguard's licensing server to verify authorization. Connection metadata (IP address, GitHub repository identifier, timestamp, and any metadata encoded in the auth token) is transmitted to Chainguard, Inc. even if authorization is denied in accordance with our [Privacy Notice](https://www.chainguard.dev/legal/privacy-notice)
