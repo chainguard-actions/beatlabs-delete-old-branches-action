@@ -1,0 +1,61 @@
+name: Test extra protected tag regex
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Set up a git origin reachable inside the Docker container
+        run: |
+          set -e
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          rm -rf "$GITHUB_WORKSPACE/.git-remote"
+          git init --bare "$GITHUB_WORKSPACE/.git-remote"
+          git -C "$GITHUB_WORKSPACE/.git-remote" config receive.shallowUpdate true
+          TREE=$(git rev-parse 'HEAD^{tree}')
+          OLD=$(GIT_AUTHOR_DATE="2000-01-01T00:00:00Z" GIT_COMMITTER_DATE="2000-01-01T00:00:00Z" \
+            git commit-tree "$TREE" -p HEAD -m "old commit")
+          git push "$GITHUB_WORKSPACE/.git-remote" HEAD:refs/heads/main
+          git push "$GITHUB_WORKSPACE/.git-remote" "$OLD:refs/tags/keep-v1.0.0"
+          git push "$GITHUB_WORKSPACE/.git-remote" "$OLD:refs/tags/v0.0.1-acttest"
+          git remote set-url origin ./.git-remote 2>/dev/null || git remote add origin ./.git-remote
+          GITDIR=$(git rev-parse --git-dir)
+          if [ ! -f "$GITDIR/shallow" ]; then git rev-parse HEAD > "$GITDIR/shallow"; fi
+          git ls-remote -q --refs
+      - id: action
+        uses: .
+        with:
+          repo_token: ${{ github.token }}
+          date: "1 month ago"
+          dry_run: "true"
+          delete_tags: "true"
+          minimum_tags: "0"
+          extra_protected_tag_regex: "^keep-.*"
+      - name: Assert outputs
+        env:
+          WAS_DRY_RUN: ${{ steps.action.outputs.was_dry_run }}
+          DELETED: ${{ steps.action.outputs.deleted_branches }}
+        run: |
+          echo "was_dry_run: $WAS_DRY_RUN"
+          echo "deleted_branches: '$DELETED'"
+          if [ "$WAS_DRY_RUN" != "true" ]; then
+            echo "FAIL: expected was_dry_run=true"
+            exit 1
+          fi
+          if echo " $DELETED " | grep -q ' main '; then
+            echo "FAIL: default branch main must never be selected"
+            exit 1
+          fi
+          if echo " $DELETED " | grep -q 'keep-v1.0.0'; then
+            echo "FAIL: protected tag keep-v1.0.0 was selected"
+            exit 1
+          fi
+          git ls-remote -q --tags --refs ./.git-remote | grep -q 'keep-v1.0.0' || {
+            echo "FAIL: protected tag was deleted"; exit 1; }
+          git ls-remote -q --tags --refs ./.git-remote | grep -q 'v0.0.1-acttest' || {
+            echo "FAIL: tag was deleted despite dry run"; exit 1; }
+          echo "PASS"

@@ -1,0 +1,51 @@
+name: Test extra protected branch regex with dry_run false
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Set up a git origin reachable inside the Docker container
+        run: |
+          set -e
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          rm -rf "$GITHUB_WORKSPACE/.git-remote"
+          git init --bare "$GITHUB_WORKSPACE/.git-remote"
+          git -C "$GITHUB_WORKSPACE/.git-remote" config receive.shallowUpdate true
+          TREE=$(git rev-parse 'HEAD^{tree}')
+          OLD=$(GIT_AUTHOR_DATE="2000-01-01T00:00:00Z" GIT_COMMITTER_DATE="2000-01-01T00:00:00Z" \
+            git commit-tree "$TREE" -p HEAD -m "old commit")
+          git push "$GITHUB_WORKSPACE/.git-remote" HEAD:refs/heads/main
+          git push "$GITHUB_WORKSPACE/.git-remote" "$OLD:refs/heads/old-branch"
+          git remote set-url origin ./.git-remote 2>/dev/null || git remote add origin ./.git-remote
+          GITDIR=$(git rev-parse --git-dir)
+          if [ ! -f "$GITDIR/shallow" ]; then git rev-parse HEAD > "$GITDIR/shallow"; fi
+          git ls-remote -q --heads --refs
+      - id: action
+        uses: .
+        with:
+          repo_token: ${{ github.token }}
+          date: "1 month ago"
+          dry_run: "false"
+          extra_protected_branch_regex: "^old-"
+          exclude_open_pr_branches: "false"
+      - name: Assert outputs
+        env:
+          WAS_DRY_RUN: ${{ steps.action.outputs.was_dry_run }}
+          DELETED: ${{ steps.action.outputs.deleted_branches }}
+        run: |
+          echo "was_dry_run: $WAS_DRY_RUN"
+          echo "deleted_branches: '$DELETED'"
+          if [ "$WAS_DRY_RUN" != "false" ]; then
+            echo "FAIL: expected was_dry_run=false"
+            exit 1
+          fi
+          if [ -n "$(echo "$DELETED" | tr -d '[:space:]')" ]; then
+            echo "FAIL: expected no deleted branches (all protected), got '$DELETED'"
+            exit 1
+          fi
+          echo "PASS"

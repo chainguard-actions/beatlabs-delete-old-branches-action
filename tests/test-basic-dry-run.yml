@@ -1,0 +1,60 @@
+name: Test basic dry run
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Set up a git origin reachable inside the Docker container
+        run: |
+          set -e
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          rm -rf "$GITHUB_WORKSPACE/.git-remote"
+          git init --bare "$GITHUB_WORKSPACE/.git-remote"
+          git -C "$GITHUB_WORKSPACE/.git-remote" config receive.shallowUpdate true
+          TREE=$(git rev-parse 'HEAD^{tree}')
+          OLD=$(GIT_AUTHOR_DATE="2000-01-01T00:00:00Z" GIT_COMMITTER_DATE="2000-01-01T00:00:00Z" \
+            git commit-tree "$TREE" -p HEAD -m "old commit")
+          NEW=$(git commit-tree "$TREE" -p HEAD -m "recent commit")
+          git push "$GITHUB_WORKSPACE/.git-remote" HEAD:refs/heads/main
+          git push "$GITHUB_WORKSPACE/.git-remote" "$OLD:refs/heads/old-branch"
+          git push "$GITHUB_WORKSPACE/.git-remote" "$NEW:refs/heads/recent-branch"
+          # relative URL works both on the job host and inside the docker action container
+          git remote set-url origin ./.git-remote 2>/dev/null || git remote add origin ./.git-remote
+          # The action runs `git fetch --unshallow`, which requires a shallow repo
+          GITDIR=$(git rev-parse --git-dir)
+          if [ ! -f "$GITDIR/shallow" ]; then git rev-parse HEAD > "$GITDIR/shallow"; fi
+          git ls-remote -q --heads --refs
+      - id: action
+        uses: .
+        with:
+          repo_token: ${{ github.token }}
+          date: "1 month ago"
+      - name: Assert outputs
+        env:
+          WAS_DRY_RUN: ${{ steps.action.outputs.was_dry_run }}
+          DELETED: ${{ steps.action.outputs.deleted_branches }}
+        run: |
+          echo "was_dry_run: $WAS_DRY_RUN"
+          echo "deleted_branches: '$DELETED'"
+          if [ "$WAS_DRY_RUN" != "true" ]; then
+            echo "FAIL: expected was_dry_run=true"
+            exit 1
+          fi
+          for b in $DELETED; do
+            if [ "$b" != "old-branch" ]; then
+              echo "FAIL: unexpected branch selected for deletion: $b"
+              exit 1
+            fi
+          done
+          echo "PASS"
+      - name: Assert no branch was actually deleted (dry run)
+        run: |
+          git ls-remote -q --heads --refs ./.git-remote | tee refs.txt
+          grep -q 'refs/heads/old-branch' refs.txt || { echo "FAIL: old-branch was deleted"; exit 1; }
+          grep -q 'refs/heads/main' refs.txt || { echo "FAIL: main was deleted"; exit 1; }
+          echo "PASS"
