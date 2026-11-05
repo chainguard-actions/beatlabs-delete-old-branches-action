@@ -1,0 +1,52 @@
+name: Test basic dry run
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Set up a git origin reachable inside the Docker container
+        run: |
+          set -e
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --unshallow || true
+          fi
+          rm -f .git/shallow
+          rm -rf "$GITHUB_WORKSPACE/.git-remote"
+          git init --bare "$GITHUB_WORKSPACE/.git-remote"
+          git push "$GITHUB_WORKSPACE/.git-remote" HEAD:refs/heads/act-harness
+          git push "$GITHUB_WORKSPACE/.git-remote" HEAD:refs/heads/stale-feature
+          git remote set-url origin ./.git-remote 2>/dev/null || git remote add origin ./.git-remote
+          # The action runs "git fetch --unshallow", which fails on a complete repo; mark it shallow.
+          git rev-parse HEAD > .git/shallow
+          git remote -v
+      - id: action
+        uses: .
+        env:
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: safe.directory
+          GIT_CONFIG_VALUE_0: "*"
+        with:
+          repo_token: ${{ github.token }}
+          date: "now"
+          dry_run: "true"
+      - name: Assert was_dry_run is true
+        env:
+          ACTUAL: ${{ steps.action.outputs.was_dry_run }}
+        run: |
+          echo "actual: $ACTUAL"
+          if [ "$ACTUAL" != "true" ]; then
+            echo "FAIL: expected 'true'"
+            exit 1
+          fi
+          echo "PASS"
+      - name: Assert act-harness/stale-feature still exist on origin (dry run)
+        run: |
+          git ls-remote ./.git-remote
+          git ls-remote --heads ./.git-remote | grep -q 'refs/heads/stale-feature' || { echo "FAIL: stale-feature removed"; exit 1; }
+          echo "PASS"

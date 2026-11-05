@@ -1,0 +1,55 @@
+name: Test delete tags in dry run mode
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Set up a git origin with tags reachable inside the Docker container
+        run: |
+          set -e
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --unshallow || true
+          fi
+          rm -f .git/shallow
+          git tag -l | xargs -r git tag -d
+          git tag v0.0.1
+          git tag v0.0.2
+          git tag keep-me
+          rm -rf "$GITHUB_WORKSPACE/.git-remote"
+          git init --bare "$GITHUB_WORKSPACE/.git-remote"
+          git push "$GITHUB_WORKSPACE/.git-remote" HEAD:refs/heads/act-harness
+          git push "$GITHUB_WORKSPACE/.git-remote" --tags
+          git remote set-url origin ./.git-remote 2>/dev/null || git remote add origin ./.git-remote
+          git rev-parse HEAD > .git/shallow
+      - id: action
+        uses: .
+        env:
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: safe.directory
+          GIT_CONFIG_VALUE_0: "*"
+        with:
+          repo_token: ${{ github.token }}
+          date: "now"
+          dry_run: "true"
+          delete_tags: "true"
+          minimum_tags: "1"
+          extra_protected_tag_regex: "^keep-"
+      - name: Assert dry run and tags preserved
+        env:
+          DRY: ${{ steps.action.outputs.was_dry_run }}
+        run: |
+          echo "was_dry_run: $DRY"
+          if [ "$DRY" != "true" ]; then
+            echo "FAIL: expected was_dry_run 'true'"
+            exit 1
+          fi
+          TAGS="$(git ls-remote --tags ./.git-remote)"
+          echo "$TAGS"
+          for t in v0.0.1 v0.0.2 keep-me; do
+            echo "$TAGS" | grep -q "refs/tags/$t$" || { echo "FAIL: tag $t missing after dry run"; exit 1; }
+          done
+          echo "PASS"

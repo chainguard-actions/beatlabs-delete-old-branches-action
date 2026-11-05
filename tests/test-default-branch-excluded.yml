@@ -1,0 +1,55 @@
+name: Test default branch is never listed for deletion
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Set up a git origin reachable inside the Docker container
+        run: |
+          set -e
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --unshallow || true
+          fi
+          rm -f .git/shallow
+          rm -rf "$GITHUB_WORKSPACE/.git-remote"
+          git init --bare "$GITHUB_WORKSPACE/.git-remote"
+          git push "$GITHUB_WORKSPACE/.git-remote" HEAD:refs/heads/act-harness
+          git push "$GITHUB_WORKSPACE/.git-remote" HEAD:refs/heads/develop
+          git push "$GITHUB_WORKSPACE/.git-remote" HEAD:refs/heads/release-1
+          git remote set-url origin ./.git-remote 2>/dev/null || git remote add origin ./.git-remote
+          git rev-parse HEAD > .git/shallow
+      - id: action
+        uses: .
+        env:
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: safe.directory
+          GIT_CONFIG_VALUE_0: "*"
+        with:
+          repo_token: ${{ github.token }}
+          date: "now"
+          dry_run: "true"
+          default_branches: develop,act-harness
+          extra_protected_branch_regex: "^release-.*"
+          exclude_open_pr_branches: "false"
+      - name: Assert outputs
+        env:
+          DRY: ${{ steps.action.outputs.was_dry_run }}
+          DELETED: ${{ steps.action.outputs.deleted_branches }}
+        run: |
+          echo "was_dry_run: $DRY"
+          echo "deleted_branches: '$DELETED'"
+          if [ "$DRY" != "true" ]; then
+            echo "FAIL: expected was_dry_run 'true'"
+            exit 1
+          fi
+          for b in develop act-harness release-1; do
+            if echo " $DELETED " | grep -qw -- "$b"; then
+              echo "FAIL: protected branch '$b' listed for deletion"
+              exit 1
+            fi
+          done
+          echo "PASS"
