@@ -1,0 +1,61 @@
+name: Test default dry-run
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Set up a git origin reachable inside the Docker container
+        run: |
+          set -e
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          HEAD_SHA=$(git rev-parse HEAD)
+          TREE=$(git rev-parse 'HEAD^{tree}')
+          OLD_SHA=$(GIT_AUTHOR_DATE="2001-01-01T00:00:00Z" GIT_COMMITTER_DATE="2001-01-01T00:00:00Z" \
+            git commit-tree "$TREE" -p "$HEAD_SHA" -m "old commit")
+          NEW_SHA=$(git commit-tree "$TREE" -p "$HEAD_SHA" -m "recent commit")
+          rm -rf .git-remote
+          git init --bare .git-remote
+          git -C .git-remote config receive.shallowUpdate true
+          git push ./.git-remote "$HEAD_SHA:refs/heads/act-harness"
+          git push ./.git-remote "$OLD_SHA:refs/heads/main"
+          git push ./.git-remote "$OLD_SHA:refs/heads/master"
+          git push ./.git-remote "$OLD_SHA:refs/heads/stale-feature"
+          git push ./.git-remote "$NEW_SHA:refs/heads/recent-feature"
+          git remote set-url origin ./.git-remote 2>/dev/null || git remote add origin ./.git-remote
+          # The action runs "git fetch --unshallow", which requires a shallow repo
+          if [ "$(git rev-parse --is-shallow-repository)" != "true" ]; then
+            git rev-parse HEAD > "$(git rev-parse --git-dir)/shallow"
+          fi
+          git ls-remote origin
+      - id: action
+        uses: .
+        env:
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: safe.directory
+          GIT_CONFIG_VALUE_0: "*"
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          date: "1 month ago"
+      - name: Assert outputs
+        env:
+          DRY: ${{ steps.action.outputs.was_dry_run }}
+          DELETED: ${{ steps.action.outputs.deleted_branches }}
+        run: |
+          echo "was_dry_run: $DRY"
+          echo "deleted_branches: $DELETED"
+          if [ "$DRY" != "true" ]; then
+            echo "FAIL: expected was_dry_run=true"
+            exit 1
+          fi
+          for b in main master act-harness recent-feature; do
+            if echo " $DELETED " | grep -q " $b "; then
+              echo "FAIL: branch $b should not be in deleted list"
+              exit 1
+            fi
+          done
+          echo "PASS"
